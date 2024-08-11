@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from 'react';
-import { ethers } from 'ethers';
+import { ethers, BrowserProvider, JsonRpcSigner, Contract } from 'ethers';
 import { Label } from "@/components/ui/label"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
@@ -9,6 +9,12 @@ import { Button } from "@/components/ui/button"
 import { Card, CardHeader, CardContent, CardFooter } from "@/components/ui/card"
 import { Progress } from "@/components/ui/progress"
 
+interface Poll {
+  id: number;
+  title: string;
+  options: string[];
+  votes: string[];
+}
 
 const contractABI = [
   {
@@ -126,10 +132,10 @@ const contractABI = [
 const contractAddress = "0x3da8ea380Fc9bEe79E8016b7Ade75B94795eE595";
 
 export default function MantaPolls() {
-  const [provider, setProvider] = useState(null);
-  const [signer, setSigner] = useState(null);
-  const [contract, setContract] = useState(null);
-  const [polls, setPolls] = useState([]);
+  const [provider, setProvider] = useState<BrowserProvider | null>(null);
+  const [signer, setSigner] = useState<JsonRpcSigner | null>(null);
+  const [contract, setContract] = useState<Contract | null>(null);
+  const [polls, setPolls] = useState<Poll[]>([]);
   const [connectedWallet, setConnectedWallet] = useState('');
   const [newPollTitle, setNewPollTitle] = useState('');
   const [newPollOptions, setNewPollOptions] = useState('');
@@ -143,6 +149,15 @@ export default function MantaPolls() {
       setProvider(provider);
     }
   }, []);
+
+  const handleError = (error: unknown, prefix: string) => {
+    console.error(prefix, error);
+    if (error instanceof Error) {
+      setError(`${prefix}: ${error.message}`);
+    } else {
+      setError(`${prefix}: An unknown error occurred`);
+    }
+  };
 
   const connectWallet = async () => {
     if (provider) {
@@ -164,17 +179,15 @@ export default function MantaPolls() {
         // Load polls after successful connection
         await loadPolls(contract);
       } catch (error) {
-        console.error("Failed to connect wallet:", error);
-        setError(`Failed to connect wallet: ${error.message}`);
+        handleError(error, "Failed to connect wallet");
       }
     } else {
-      console.error("Ethereum object not found");
-      setError("Ethereum object not found. Please install MetaMask.");
+      console.error("Provider not available");
+      setError("Provider not available. Please make sure you have MetaMask installed and try again.");
     }
   };
 
-
-  const loadPolls = async (contractInstance) => {
+  const loadPolls = async (contractInstance: Contract | null = null) => {
     const contractToUse = contractInstance || contract;
     if (contractToUse) {
       try {
@@ -184,8 +197,8 @@ export default function MantaPolls() {
         const pollCount = await contractToUse.pollCount();
         console.log("Poll count:", pollCount.toString());
         
-        const loadedPolls = [];
-
+        const loadedPolls: Poll[] = [];
+  
         for (let i = 1; i <= pollCount; i++) {
           console.log(`Loading poll ${i}...`);
           try {
@@ -195,12 +208,12 @@ export default function MantaPolls() {
             const options = await contractToUse.getPollOptions(i);
             console.log(`Poll ${i} options:`, options);
             
-            const votes = await Promise.all(options.map(async (option) => {
+            const votes = await Promise.all(options.map(async (option: string) => {
               const voteCount = await contractToUse.getPollVotes(i, option);
               console.log(`Poll ${i}, Option "${option}" votes:`, voteCount.toString());
               return voteCount;
             }));
-
+  
             loadedPolls.push({
               id: i,
               title: poll.title,
@@ -211,20 +224,19 @@ export default function MantaPolls() {
             console.error(`Error loading poll ${i}:`, pollError);
           }
         }
-
+  
         console.log("All polls loaded:", loadedPolls);
         setPolls(loadedPolls);
       } catch (error) {
-        console.error("Failed to load polls:", error);
-        setError(`Failed to load polls: ${error.message}`);
+        handleError(error, "Failed to load polls");
       }
     } else {
       console.error("Contract is not initialized");
       setError("Contract is not initialized. Please connect your wallet.");
     }
   };
-
-  const createPoll = async (e) => {
+  
+  const createPoll = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     console.log("Create Poll button clicked");
     
@@ -232,82 +244,70 @@ export default function MantaPolls() {
       setError("Please connect your wallet first");
       return;
     }
-
+  
     if (!contract) {
       setError("Contract is not initialized. Please try reconnecting your wallet.");
       return;
     }
-
+  
     if (!newPollTitle || !newPollOptions) {
       setError("Please enter both a title and options for the poll");
       return;
     }
-
+  
     try {
       setError('');
       console.log("Creating poll with title:", newPollTitle);
       console.log("Poll options:", newPollOptions);
-
+  
       const options = newPollOptions.split(',').map(option => option.trim());
       console.log("Processed options:", options);
-
+  
       console.log("Calling contract.createPoll");
       
-      // Remove the problematic line and directly call the function
       const tx = await contract.createPoll(newPollTitle, options);
       console.log("Transaction sent:", tx.hash);
-
+  
       console.log("Waiting for transaction to be mined");
       await tx.wait();
       console.log("Transaction mined");
-
+  
       setNewPollTitle('');
       setNewPollOptions('');
       console.log("Form reset");
-
+  
       await loadPolls();
       console.log("Polls reloaded");
     } catch (error) {
-      console.error("Failed to create poll:", error);
-      if (error.reason) {
-        console.error("Error reason:", error.reason);
-      }
-      if (error.code) {
-        console.error("Error code:", error.code);
-      }
-      if (error.message) {
-        console.error("Error message:", error.message);
-      }
-      setError(`Failed to create poll: ${error.message || error.reason || 'Unknown error'}`);
+      handleError(error, "Failed to create poll");
     }
   };
-
-  const handleCreatePoll = async (title, options) => {
+  
+  const handleCreatePoll = async (title: string, options: string[]) => {
     if (!contract) {
       setError("Contract is not initialized. Please connect your wallet.");
       return;
     }
-
+  
     try {
       setError('');
       console.log("Creating poll with title:", title);
       console.log("Poll options:", options);
-
+  
       const tx = await contract.createPoll(title, options);
       console.log("Transaction sent:", tx.hash);
-
+  
       console.log("Waiting for transaction to be mined");
       await tx.wait();
       console.log("Transaction mined");
-
+  
       await loadPolls(contract);
     } catch (error) {
-      console.error("Failed to create poll:", error);
-      setError(`Failed to create poll: ${error.message}`);
+      handleError(error, "Failed to create poll");
     }
   };
-
-  const castVote = async (pollId, option) => {
+  
+  const castVote = async (pollId: number, option: string) => {
     if (contract) {
       try {
         setError('');
@@ -315,8 +315,7 @@ export default function MantaPolls() {
         await tx.wait();
         await loadPolls();
       } catch (error) {
-        console.error("Failed to cast vote:", error);
-        setError(`Failed to cast vote: ${error.message}`);
+        handleError(error, "Failed to cast vote");
       }
     }
   };
@@ -376,21 +375,21 @@ export default function MantaPolls() {
           <section>
             <h2 className="text-xl font-bold mb-4 text-[#0077b6]">Polls</h2>
             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
-              {polls.map((poll) => (
+              {polls.map((poll: Poll) => (
                 <Card key={poll.id} className="bg-white dark:bg-[#2c2d30] rounded-lg shadow-md">
                   <CardHeader className="border-b border-[#e0e0e0] dark:border-[#2c2d30] p-4">
                     <h3 className="text-lg font-bold text-[#0077b6]">{poll.title}</h3>
                   </CardHeader>
                   <CardContent className="p-4">
-                    {poll.options.map((option, index) => (
+                    {poll.options.map((option: string, index: number) => (
                       <div key={index} className="mb-2">
                         <div className="flex items-center justify-between">
                           <span>{option}</span>
                           <span className="font-bold">{poll.votes[index]}</span>
                         </div>
                         <Progress
-                          value={poll.votes[index]}
-                          max={poll.votes.reduce((a, b) => a + b, 0)}
+                          value={parseInt(poll.votes[index])}
+                          max={poll.votes.reduce((a, b) => a + parseInt(b), 0)}
                           className="h-2 bg-[#0077b6]"
                         />
                       </div>
@@ -403,27 +402,27 @@ export default function MantaPolls() {
                         className="bg-[#0077b6] text-white hover:bg-[#005a8f] p-2 rounded"
                       >
                         <option value="">Select an option</option>
-                        {poll.options.map((option, index) => (
+                        {poll.options.map((option: string, index: number) => (
                           <option key={index} value={option}>{option}</option>
                         ))}
                       </select>
                       <div className="text-sm text-[#0077b6] font-bold">
-                        Total Votes: {poll.votes.reduce((a, b) => a + b, 0)}
-                      </div>
+                      Total Votes: {poll.votes.reduce((a, b) => a + parseInt(b), 0)}
                     </div>
-                  </CardFooter>
-                </Card>
-              ))}
-            </div>
-          </section>
-        </main>
-        <footer className="flex items-center justify-between py-4 border-t border-[#e0e0e0] dark:border-[#2c2d30]">
-          <div>
-            <div className="text-[#0077b6]" />
+                  </div>
+                </CardFooter>
+              </Card>
+            ))}
           </div>
-        </footer>
-      </div>
+        </section>
+      </main>
+      <footer className="flex items-center justify-between py-4 border-t border-[#e0e0e0] dark:border-[#2c2d30]">
+        <div>
+          <div className="text-[#0077b6]" />
+        </div>
+      </footer>
     </div>
+  </div>
   )
 }
 
